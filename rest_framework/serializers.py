@@ -10,17 +10,13 @@ python primitives.
 2. The process of marshalling between python primitives and request and
 response content is handled by parsers and renderers.
 """
-from django.core.exceptions import ImproperlyConfigured
-from django.core.exceptions import ValidationError as DjangoValidationError
+import warnings
+
 from django.db import models
 from django.db.models.fields import FieldDoesNotExist
-from django.utils import six
 from django.utils.translation import ugettext_lazy as _
-from rest_framework.compat import OrderedDict
-from rest_framework.exceptions import ValidationError
-from rest_framework.fields import empty, set_value, Field, SkipField
-from rest_framework.settings import api_settings
-from rest_framework.utils import html, model_meta, representation
+
+from rest_framework.utils import model_meta
 from rest_framework.utils.field_mapping import (
     get_url_kwargs, get_field_kwargs,
     get_relation_kwargs, get_nested_relation_kwargs,
@@ -33,9 +29,7 @@ from rest_framework.validators import (
     UniqueForDateValidator, UniqueForMonthValidator, UniqueForYearValidator,
     UniqueTogetherValidator
 )
-import copy
-import inspect
-import warnings
+
 
 # Note: We do the following so that users of the framework can use this style:
 #
@@ -65,6 +59,7 @@ class BaseSerializer(Field):
     The BaseSerializer class provides a minimal class which may be used
     for writing custom serializer implementations.
     """
+
     def __init__(self, instance=None, data=None, **kwargs):
         self.instance = instance
         self._initial_data = data
@@ -245,7 +240,7 @@ class Serializer(BaseSerializer):
         """
         A dictionary of {field_name: field_instance}.
         """
-        # `fields` is evalutated lazily. We do this to ensure that we don't
+        # `fields` is evaluated lazily. We do this to ensure that we don't
         # have issues importing modules that use ModelSerializers as fields,
         # even if Django's app-loading stage has not yet run.
         if not hasattr(self, '_fields'):
@@ -343,7 +338,7 @@ class Serializer(BaseSerializer):
             # Normally you should raise `serializers.ValidationError`
             # inside your codebase, but we handle Django's validation
             # exception class as well for simpler compat.
-            # Eg. Calling Model.clean() explictily inside Serializer.validate()
+            # Eg. Calling Model.clean() explicitly inside Serializer.validate()
             raise ValidationError({
                 api_settings.NON_FIELD_ERRORS_KEY: list(exc.messages)
             })
@@ -566,6 +561,64 @@ class ListSerializer(BaseSerializer):
 # ModelSerializer & HyperlinkedModelSerializer
 # --------------------------------------------
 
+def raise_errors_on_nested_writes(method_name, serializer, validated_data):
+    """
+    Give explicit errors when users attempt to pass writable nested data.
+
+    If we don't do this explicitly they'd get a less helpful error when
+    calling `.save()` on the serializer.
+
+    We don't *automatically* support these sorts of nested writes brecause
+    there are too many ambiguities to define a default behavior.
+
+    Eg. Suppose we have a `UserSerializer` with a nested profile. How should
+    we handle the case of an update, where the `profile` realtionship does
+    not exist? Any of the following might be valid:
+
+    * Raise an application error.
+    * Silently ignore the nested part of the update.
+    * Automatically create a profile instance.
+    """
+
+    # Ensure we don't have a writable nested field. For example:
+    #
+    # class UserSerializer(ModelSerializer):
+    #     ...
+    #     profile = ProfileSerializer()
+    assert not any(
+        isinstance(field, BaseSerializer) and (key in validated_data)
+        for key, field in serializer.fields.items()
+    ), (
+        'The `.{method_name}()` method does not support writable nested'
+        'fields by default.\nWrite an explicit `.{method_name}()` method for '
+        'serializer `{module}.{class_name}`, or set `read_only=True` on '
+        'nested serializer fields.'.format(
+            method_name=method_name,
+            module=serializer.__class__.__module__,
+            class_name=serializer.__class__.__name__
+        )
+    )
+
+    # Ensure we don't have a writable dotted-source field. For example:
+    #
+    # class UserSerializer(ModelSerializer):
+    #     ...
+    #     address = serializer.CharField('profile.address')
+    assert not any(
+        '.' in field.source and (key in validated_data)
+        for key, field in serializer.fields.items()
+    ), (
+        'The `.{method_name}()` method does not support writable dotted-source '
+        'fields by default.\nWrite an explicit `.{method_name}()` method for '
+        'serializer `{module}.{class_name}`, or set `read_only=True` on '
+        'dotted-source serializer fields.'.format(
+            method_name=method_name,
+            module=serializer.__class__.__module__,
+            class_name=serializer.__class__.__name__
+        )
+    )
+
+
 class ModelSerializer(Serializer):
     """
     A `ModelSerializer` is just a regular `Serializer`, except that:
@@ -576,7 +629,7 @@ class ModelSerializer(Serializer):
 
     The process of automatically determining a set of serializer fields
     based on the model fields is reasonably complex, but you almost certainly
-    don't need to dig into the implemention.
+    don't need to dig into the implementation.
 
     If the `ModelSerializer` class *doesn't* generate the set of fields that
     you need you should either declare the extra/differing fields explicitly on
@@ -629,18 +682,7 @@ class ModelSerializer(Serializer):
         If you want to support writable nested relationships you'll need
         to write an explicit `.create()` method.
         """
-        # Check that the user isn't trying to handle a writable nested field.
-        # If we don't do this explicitly they'd likely get a confusing
-        # error at the point of calling `Model.objects.create()`.
-        assert not any(
-            isinstance(field, BaseSerializer) and (key in validated_attrs)
-            for key, field in self.fields.items()
-        ), (
-            'The `.create()` method does not suport nested writable fields '
-            'by default. Write an explicit `.create()` method for serializer '
-            '`%s.%s`, or set `read_only=True` on nested serializer fields.' %
-            (self.__class__.__module__, self.__class__.__name__)
-        )
+        raise_errors_on_nested_writes('create', self, validated_data)
 
         ModelClass = self.Meta.model
 
@@ -680,19 +722,12 @@ class ModelSerializer(Serializer):
         return instance
 
     def update(self, instance, validated_data):
-        assert not any(
-            isinstance(field, BaseSerializer) and (key in validated_attrs)
-            for key, field in self.fields.items()
-        ), (
-            'The `.update()` method does not suport nested writable fields '
-            'by default. Write an explicit `.update()` method for serializer '
-            '`%s.%s`, or set `read_only=True` on nested serializer fields.' %
-            (self.__class__.__module__, self.__class__.__name__)
-        )
+        raise_errors_on_nested_writes('update', self, validated_data)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+
         return instance
 
     def get_validators(self):
@@ -760,10 +795,16 @@ class ModelSerializer(Serializer):
         extra_kwargs = getattr(self.Meta, 'extra_kwargs', {})
 
         if fields and not isinstance(fields, (list, tuple)):
-            raise TypeError('`fields` must be a list or tuple')
+            raise TypeError(
+                'The `fields` option must be a list or tuple. Got %s.' %
+                type(fields).__name__
+            )
 
         if exclude and not isinstance(exclude, (list, tuple)):
-            raise TypeError('`exclude` must be a list or tuple')
+            raise TypeError(
+                'The `exclude` option must be a list or tuple. Got %s.' %
+                type(exclude).__name__
+            )
 
         assert not (fields and exclude), "Cannot set both 'fields' and 'exclude'."
 
@@ -830,7 +871,7 @@ class ModelSerializer(Serializer):
         # applied, we can add the extra 'required=...' or 'default=...'
         # arguments that are appropriate to these fields, or add a `HiddenField` for it.
         for unique_constraint_name in unique_constraint_names:
-            # Get the model field that is refered too.
+            # Get the model field that is referred too.
             unique_constraint_field = model._meta.get_field(unique_constraint_name)
 
             if getattr(unique_constraint_field, 'auto_now_add', None):
@@ -913,7 +954,7 @@ class ModelSerializer(Serializer):
                 )
 
             # Check that any fields declared on the class are
-            # also explicity included in `Meta.fields`.
+            # also explicitly included in `Meta.fields`.
             missing_fields = set(declared_fields.keys()) - set(fields)
             if missing_fields:
                 missing_field = list(missing_fields)[0]
@@ -1007,6 +1048,7 @@ class ModelSerializer(Serializer):
             class Meta:
                 model = relation_info.related
                 depth = nested_depth
+
         return NestedSerializer
 
 
@@ -1033,4 +1075,5 @@ class HyperlinkedModelSerializer(ModelSerializer):
             class Meta:
                 model = relation_info.related
                 depth = nested_depth
+
         return NestedSerializer
