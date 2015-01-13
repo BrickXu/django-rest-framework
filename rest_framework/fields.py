@@ -1,3 +1,4 @@
+from __future__ import unicode_literals
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -10,11 +11,13 @@ from django.utils.translation import ugettext_lazy as _
 from rest_framework import ISO_8601
 from rest_framework.compat import (
     EmailValidator, MinValueValidator, MaxValueValidator,
-    MinLengthValidator, MaxLengthValidator, URLValidator, OrderedDict
+    MinLengthValidator, MaxLengthValidator, URLValidator, OrderedDict,
+    unicode_repr, unicode_to_repr
 )
 from rest_framework.exceptions import ValidationError
 from rest_framework.settings import api_settings
 from rest_framework.utils import html, representation, humanize_datetime
+import collections
 import copy
 import datetime
 import decimal
@@ -60,14 +63,12 @@ def get_attribute(instance, attrs):
             # Break out early if we get `None` at any point in a nested lookup.
             return None
         try:
-            instance = getattr(instance, attr)
+            if isinstance(instance, collections.Mapping):
+                instance = instance[attr]
+            else:
+                instance = getattr(instance, attr)
         except ObjectDoesNotExist:
             return None
-        except AttributeError as exc:
-            try:
-                return instance[attr]
-            except (KeyError, TypeError, AttributeError):
-                raise exc
         if is_simple_callable(instance):
             instance = instance()
     return instance
@@ -114,7 +115,9 @@ class CreateOnlyDefault:
         return self.default
 
     def __repr__(self):
-        return '%s(%s)' % (self.__class__.__name__, repr(self.default))
+        return unicode_to_repr(
+            '%s(%s)' % (self.__class__.__name__, unicode_repr(self.default))
+        )
 
 
 class CurrentUserDefault:
@@ -125,7 +128,7 @@ class CurrentUserDefault:
         return self.user
 
     def __repr__(self):
-        return '%s()' % self.__class__.__name__
+        return unicode_to_repr('%s()' % self.__class__.__name__)
 
 
 class SkipField(Exception):
@@ -181,8 +184,11 @@ class Field(object):
         self.style = {} if style is None else style
         self.allow_null = allow_null
 
-        if allow_null and self.default_empty_html is empty:
-            self.default_empty_html = None
+        if self.default_empty_html is not empty:
+            if not required:
+                self.default_empty_html = empty
+            elif default is not empty:
+                self.default_empty_html = default
 
         if validators is not None:
             self.validators = validators[:]
@@ -267,7 +273,11 @@ class Field(object):
                     return empty
                 return self.default_empty_html
             ret = dictionary[self.field_name]
-            return self.default_empty_html if (ret == '') else ret
+            if ret == '' and self.allow_null:
+                # If the field is blank, and null is a valid value then
+                # determine if we should use null instead.
+                return '' if getattr(self, 'allow_blank', False) else None
+            return ret
         return dictionary.get(self.field_name, empty)
 
     def get_attribute(self, instance):
@@ -275,7 +285,25 @@ class Field(object):
         Given the *outgoing* object instance, return the primitive value
         that should be used for this field.
         """
-        return get_attribute(instance, self.source_attrs)
+        try:
+            return get_attribute(instance, self.source_attrs)
+        except (KeyError, AttributeError) as exc:
+            if not self.required and self.default is empty:
+                raise SkipField()
+            msg = (
+                'Got {exc_type} when attempting to get a value for field '
+                '`{field}` on serializer `{serializer}`.\nThe serializer '
+                'field might be named incorrectly and not match '
+                'any attribute or key on the `{instance}` instance.\n'
+                'Original exception text was: {exc}.'.format(
+                    exc_type=type(exc).__name__,
+                    field=self.field_name,
+                    serializer=self.parent.__class__.__name__,
+                    instance=instance.__class__.__name__,
+                    exc=exc
+                )
+            )
+            raise type(exc)(msg)
 
     def get_default(self):
         """
@@ -294,6 +322,34 @@ class Field(object):
             return self.default()
         return self.default
 
+    def validate_empty_values(self, data):
+        """
+        Validate empty values, and either:
+
+        * Raise `ValidationError`, indicating invalid data.
+        * Raise `SkipField`, indicating that the field should be ignored.
+        * Return (True, data), indicating an empty value that should be
+          returned without any furhter validation being applied.
+        * Return (False, data), indicating a non-empty value, that should
+          have validation applied as normal.
+        """
+        if self.read_only:
+            return (True, self.get_default())
+
+        if data is empty:
+            if getattr(self.root, 'partial', False):
+                raise SkipField()
+            if self.required:
+                self.fail('required')
+            return (True, self.get_default())
+
+        if data is None:
+            if not self.allow_null:
+                self.fail('null')
+            return (True, None)
+
+        return (False, data)
+
     def run_validation(self, data=empty):
         """
         Validate a simple representation and return the internal value.
@@ -304,21 +360,9 @@ class Field(object):
         May raise `SkipField` if the field should not be included in the
         validated data.
         """
-        if self.read_only:
-            return self.get_default()
-
-        if data is empty:
-            if getattr(self.root, 'partial', False):
-                raise SkipField()
-            if self.required:
-                self.fail('required')
-            return self.get_default()
-
-        if data is None:
-            if not self.allow_null:
-                self.fail('null')
-            return None
-
+        (is_empty_value, data) = self.validate_empty_values(data)
+        if is_empty_value:
+            return data
         value = self.to_internal_value(data)
         self.run_validators(value)
         return value
@@ -351,13 +395,23 @@ class Field(object):
         """
         Transform the *incoming* primitive data into a native value.
         """
-        raise NotImplementedError('to_internal_value() must be implemented.')
+        raise NotImplementedError(
+            '{cls}.to_internal_value() must be implemented.'.format(
+                cls=self.__class__.__name__
+            )
+        )
 
     def to_representation(self, value):
         """
         Transform the *outgoing* native value into primitive data.
         """
-        raise NotImplementedError('to_representation() must be implemented.')
+        raise NotImplementedError(
+            '{cls}.to_representation() must be implemented.\n'
+            'If you are upgrading from REST framework version 2 '
+            'you might want `ReadOnlyField`.'.format(
+                cls=self.__class__.__name__
+            )
+        )
 
     def fail(self, key, **kwargs):
         """
@@ -422,7 +476,7 @@ class Field(object):
         This allows us to create descriptive representations for serializer
         instances that show all the declared fields on the serializer.
         """
-        return representation.field_repr(self)
+        return unicode_to_repr(representation.field_repr(self))
 
 
 # Boolean types...
@@ -494,11 +548,9 @@ class CharField(Field):
     default_error_messages = {
         'blank': _('This field may not be blank.'),
         'max_length': _('Ensure this field has no more than {max_length} characters.'),
-        'min_length': _('Ensure this field has no more than {min_length} characters.')
+        'min_length': _('Ensure this field has at least {min_length} characters.')
     }
     initial = ''
-    coerce_blank_to_null = False
-    default_empty_html = ''
 
     def __init__(self, **kwargs):
         self.allow_blank = kwargs.pop('allow_blank', False)
@@ -942,9 +994,14 @@ class ChoiceField(Field):
             (six.text_type(key), key) for key in self.choices.keys()
         ])
 
+        self.allow_blank = kwargs.pop('allow_blank', False)
+
         super(ChoiceField, self).__init__(**kwargs)
 
     def to_internal_value(self, data):
+        if data == '' and self.allow_blank:
+            return ''
+
         try:
             return self.choice_strings_to_values[six.text_type(data)]
         except KeyError:

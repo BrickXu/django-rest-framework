@@ -12,6 +12,7 @@ import json
 import django
 from django import forms
 from django.core.exceptions import ImproperlyConfigured
+from django.core.paginator import Page
 from django.http.multipartparser import parse_header
 from django.template import Context, RequestContext, loader, Template
 from django.test.client import encode_multipart
@@ -533,6 +534,8 @@ class BrowsableAPIRenderer(BaseRenderer):
         serializer = getattr(data, 'serializer', None)
         if serializer and not getattr(serializer, 'many', False):
             instance = getattr(serializer, 'instance', None)
+            if isinstance(instance, Page):
+                instance = None
         else:
             instance = None
 
@@ -541,12 +544,12 @@ class BrowsableAPIRenderer(BaseRenderer):
         # serializer instance, rather than dynamically creating a new one.
         if request.method == method and serializer is not None:
             try:
-                data = request.data
+                kwargs = {'data': request.data}
             except ParseError:
-                data = None
+                kwargs = {}
             existing_serializer = serializer
         else:
-            data = None
+            kwargs = {}
             existing_serializer = None
 
         with override_method(view, request, method) as request:
@@ -566,11 +569,13 @@ class BrowsableAPIRenderer(BaseRenderer):
                 serializer = existing_serializer
             else:
                 if method in ('PUT', 'PATCH'):
-                    serializer = view.get_serializer(instance=instance, data=data)
+                    serializer = view.get_serializer(instance=instance, **kwargs)
                 else:
-                    serializer = view.get_serializer(data=data)
-                if data is not None:
-                    serializer.is_valid()
+                    serializer = view.get_serializer(**kwargs)
+
+            if hasattr(serializer, 'initial_data'):
+                serializer.is_valid()
+
             form_renderer = self.form_renderer_class()
             return form_renderer.render(
                 serializer.data,
@@ -591,6 +596,8 @@ class BrowsableAPIRenderer(BaseRenderer):
         serializer = getattr(data, 'serializer', None)
         if serializer and not getattr(serializer, 'many', False):
             instance = getattr(serializer, 'instance', None)
+            if isinstance(instance, Page):
+                instance = None
         else:
             instance = None
 

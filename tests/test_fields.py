@@ -62,7 +62,7 @@ class TestEmpty:
         """
         field = serializers.CharField(allow_blank=True)
         output = field.run_validation('')
-        assert output is ''
+        assert output == ''
 
     def test_default(self):
         """
@@ -213,6 +213,56 @@ class TestBooleanHTMLInput:
         serializer = self.Serializer(data=MockHTMLDict())
         assert serializer.is_valid()
         assert serializer.validated_data == {'archived': False}
+
+
+class MockHTMLDict(dict):
+    """
+    This class mocks up a dictionary like object, that behaves
+    as if it was returned for multipart or urlencoded data.
+    """
+    getlist = None
+
+
+class TestHTMLInput:
+    def test_empty_html_charfield(self):
+        class TestSerializer(serializers.Serializer):
+            message = serializers.CharField(default='happy')
+
+        serializer = TestSerializer(data=MockHTMLDict())
+        assert serializer.is_valid()
+        assert serializer.validated_data == {'message': 'happy'}
+
+    def test_empty_html_charfield_allow_null(self):
+        class TestSerializer(serializers.Serializer):
+            message = serializers.CharField(allow_null=True)
+
+        serializer = TestSerializer(data=MockHTMLDict({'message': ''}))
+        assert serializer.is_valid()
+        assert serializer.validated_data == {'message': None}
+
+    def test_empty_html_datefield_allow_null(self):
+        class TestSerializer(serializers.Serializer):
+            expiry = serializers.DateField(allow_null=True)
+
+        serializer = TestSerializer(data=MockHTMLDict({'expiry': ''}))
+        assert serializer.is_valid()
+        assert serializer.validated_data == {'expiry': None}
+
+    def test_empty_html_charfield_allow_null_allow_blank(self):
+        class TestSerializer(serializers.Serializer):
+            message = serializers.CharField(allow_null=True, allow_blank=True)
+
+        serializer = TestSerializer(data=MockHTMLDict({'message': ''}))
+        assert serializer.is_valid()
+        assert serializer.validated_data == {'message': ''}
+
+    def test_empty_html_charfield_required_false(self):
+        class TestSerializer(serializers.Serializer):
+            message = serializers.CharField(required=False)
+
+        serializer = TestSerializer(data=MockHTMLDict())
+        assert serializer.is_valid()
+        assert serializer.validated_data == {}
 
 
 class TestCreateOnlyDefault:
@@ -803,6 +853,21 @@ class TestChoiceField(FieldValues):
             ('good', 'Good quality'),
         ]
     )
+
+    def test_allow_blank(self):
+        """
+        If `allow_blank=True` then '' is a valid input.
+        """
+        field = serializers.ChoiceField(
+            allow_blank=True,
+            choices=[
+                ('poor', 'Poor quality'),
+                ('medium', 'Medium quality'),
+                ('good', 'Good quality'),
+            ]
+        )
+        output = field.run_validation('')
+        assert output == ''
 
 
 class TestChoiceFieldWithType(FieldValues):

@@ -41,6 +41,8 @@ Defaults to `False`
 Normally an error will be raised if a field is not supplied during deserialization.
 Set to false if this field is not required to be present during deserialization.
 
+Setting this to `False` also allows the object attribute or dictionary key to be omitted from output when serializing the instance. If the key is not present it will simply not be included in the output representation.
+
 Defaults to `True`.
 
 ### `allow_null`
@@ -111,6 +113,8 @@ Two options are currently used in HTML form generation, `'input_type'` and `'bas
 ## BooleanField
 
 A boolean representation.
+
+When using HTML encoded form input be aware that omitting a value will always be treated as setting a field to `False`, even if it has a `default=True` option specified. This is because HTML checkbox inputs represent the unchecked state by omitting the value, so REST framework treats omission as if it is an empty checkbox input.
 
 Corresponds to `django.db.models.fields.BooleanField`.
 
@@ -310,6 +314,9 @@ Used by `ModelSerializer` to automatically generate fields if the corresponding 
 **Signature:** `ChoiceField(choices)`
 
 - `choices` - A list of valid values, or a list of `(key, display_name)` tuples.
+- `allow_blank` - If set to `True` then the empty string should be considered a valid value. If set to `False` then the empty string is considered invalid and will raise a validation error. Defaults to `False`.
+
+Both the `allow_blank` and `allow_null` are valid options on `ChoiceField`, although it is highly recommended that you only use one and not both. `allow_blank` should be preferred for textual choices, and `allow_null` should be preferred for numeric or other non-textual choices.
 
 ## MultipleChoiceField
 
@@ -318,6 +325,9 @@ A field that can accept a set of zero, one or many values, chosen from a limited
 **Signature:** `MultipleChoiceField(choices)`
 
 - `choices` - A list of valid values, or a list of `(key, display_name)` tuples.
+- `allow_blank` - If set to `True` then the empty string should be considered a valid value. If set to `False` then the empty string is considered invalid and will raise a validation error. Defaults to `False`.
+
+As with `ChoiceField`, both the `allow_blank` and `allow_null` options are valid, although it is highly recommended that you only use one and not both. `allow_blank` should be preferred for textual choices, and `allow_null` should be preferred for numeric or other non-textual choices.
 
 ---
 
@@ -472,7 +482,7 @@ Let's look at an example of serializing a class that represents an RGB color val
 
     class ColorField(serializers.Field):
         """
-        Color objects are serialized into "rgb(#, #, #)" notation.
+        Color objects are serialized into 'rgb(#, #, #)' notation.
         """
         def to_representation(self, obj):
             return "rgb(%d, %d, %d)" % (obj.red, obj.green, obj.blue)

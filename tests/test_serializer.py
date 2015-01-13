@@ -1,4 +1,8 @@
+# coding: utf-8
+from __future__ import unicode_literals
+from .utils import MockObject
 from rest_framework import serializers
+from rest_framework.compat import unicode_repr
 import pytest
 
 
@@ -175,3 +179,102 @@ class TestStarredSource:
         instance = {'a': 1, 'b': 2, 'c': 3, 'd': 4}
         serializer = self.Serializer(instance)
         assert serializer.data == self.data
+
+
+class TestIncorrectlyConfigured:
+    def test_incorrect_field_name(self):
+        class ExampleSerializer(serializers.Serializer):
+            incorrect_name = serializers.IntegerField()
+
+        class ExampleObject:
+            def __init__(self):
+                self.correct_name = 123
+
+        instance = ExampleObject()
+        serializer = ExampleSerializer(instance)
+        with pytest.raises(AttributeError) as exc_info:
+            serializer.data
+        msg = str(exc_info.value)
+        assert msg.startswith(
+            "Got AttributeError when attempting to get a value for field `incorrect_name` on serializer `ExampleSerializer`.\n"
+            "The serializer field might be named incorrectly and not match any attribute or key on the `ExampleObject` instance.\n"
+            "Original exception text was:"
+        )
+
+
+class TestUnicodeRepr:
+    def test_unicode_repr(self):
+        class ExampleSerializer(serializers.Serializer):
+            example = serializers.CharField()
+
+        class ExampleObject:
+            def __init__(self):
+                self.example = '한국'
+
+            def __repr__(self):
+                return unicode_repr(self.example)
+
+        instance = ExampleObject()
+        serializer = ExampleSerializer(instance)
+        repr(serializer)  # Should not error.
+
+
+class TestNotRequiredOutput:
+    def test_not_required_output_for_dict(self):
+        """
+        'required=False' should allow a dictionary key to be missing in output.
+        """
+        class ExampleSerializer(serializers.Serializer):
+            omitted = serializers.CharField(required=False)
+            included = serializers.CharField()
+
+        serializer = ExampleSerializer(data={'included': 'abc'})
+        serializer.is_valid()
+        assert serializer.data == {'included': 'abc'}
+
+    def test_not_required_output_for_object(self):
+        """
+        'required=False' should allow an object attribute to be missing in output.
+        """
+        class ExampleSerializer(serializers.Serializer):
+            omitted = serializers.CharField(required=False)
+            included = serializers.CharField()
+
+            def create(self, validated_data):
+                return MockObject(**validated_data)
+
+        serializer = ExampleSerializer(data={'included': 'abc'})
+        serializer.is_valid()
+        serializer.save()
+        assert serializer.data == {'included': 'abc'}
+
+    def test_default_required_output_for_dict(self):
+        """
+        'default="something"' should require dictionary key.
+
+        We need to handle this as the field will have an implicit
+        'required=False', but it should still have a value.
+        """
+        class ExampleSerializer(serializers.Serializer):
+            omitted = serializers.CharField(default='abc')
+            included = serializers.CharField()
+
+        serializer = ExampleSerializer({'included': 'abc'})
+        with pytest.raises(KeyError):
+            serializer.data
+
+    def test_default_required_output_for_object(self):
+        """
+        'default="something"' should require object attribute.
+
+        We need to handle this as the field will have an implicit
+        'required=False', but it should still have a value.
+        """
+        class ExampleSerializer(serializers.Serializer):
+            omitted = serializers.CharField(default='abc')
+            included = serializers.CharField()
+
+        instance = MockObject(included='abc')
+        serializer = ExampleSerializer(instance)
+        with pytest.raises(AttributeError):
+            serializer.data
