@@ -10,16 +10,41 @@ import inspect
 
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.encoding import force_text
-from django.utils.six.moves.urllib import parse as urlparse
+from django.utils.six.moves.urllib.parse import urlparse as _urlparse
 from django.conf import settings
 from django.utils import six
 import django
 
 
+def unicode_repr(instance):
+    # Get the repr of an instance, but ensure it is a unicode string
+    # on both python 3 (already the case) and 2 (not the case).
+    if six.PY2:
+        return repr(instance).decode('utf-8')
+    return repr(instance)
+
+
+def unicode_to_repr(value):
+    # Coerce a unicode string to the correct repr return type, depending on
+    # the Python version. We wrap all our `__repr__` implementations with
+    # this and then use unicode throughout internally.
+    if six.PY2:
+        return value.encode('utf-8')
+    return value
+
+
+def total_seconds(timedelta):
+    # TimeDelta.total_seconds() is only available in Python 2.7
+    if hasattr(timedelta, 'total_seconds'):
+        return timedelta.total_seconds()
+    else:
+        return (timedelta.days * 86400.0) + float(timedelta.seconds) + (timedelta.microseconds / 1000000.0)
+
+
 # OrderedDict only available in Python 2.7.
 # This will always be the case in Django 1.7 and above, as these versions
 # no longer support Python 2.6.
-# For Django <= 1.6 and Python 2.6 fall back to OrderedDict.
+# For Django <= 1.6 and Python 2.6 fall back to SortedDict.
 try:
     from collections import OrderedDict
 except ImportError:
@@ -31,6 +56,23 @@ try:
     from django.http.response import HttpResponseBase
 except ImportError:
     from django.http import HttpResponse as HttpResponseBase
+
+
+# contrib.postgres only supported from 1.8 onwards.
+try:
+    from django.contrib.postgres import fields as postgres_fields
+except ImportError:
+    postgres_fields = None
+
+
+# request only provides `resolver_match` from 1.5 onwards.
+def get_resolver_match(request):
+    try:
+        return request.resolver_match
+    except AttributeError:
+        # Django < 1.5
+        from django.core.urlresolvers import resolve
+        return resolve(request.path_info)
 
 
 # django-filter is optional
@@ -155,7 +197,7 @@ except ImportError:
 class RequestFactory(DjangoRequestFactory):
     def generic(self, method, path,
             data='', content_type='application/octet-stream', **extra):
-        parsed = urlparse.urlparse(path)
+        parsed = _urlparse(path)
         data = force_bytes_or_smart_bytes(data, settings.DEFAULT_CHARSET)
         r = {
             'PATH_INFO': self._get_path(parsed),

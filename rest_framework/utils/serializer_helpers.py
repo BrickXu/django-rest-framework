@@ -1,5 +1,6 @@
+from __future__ import unicode_literals
 import collections
-from rest_framework.compat import OrderedDict
+from rest_framework.compat import OrderedDict, unicode_to_repr
 
 
 class ReturnDict(OrderedDict):
@@ -15,6 +16,14 @@ class ReturnDict(OrderedDict):
     def copy(self):
         return ReturnDict(self, serializer=self.serializer)
 
+    def __repr__(self):
+        return dict.__repr__(self)
+
+    def __reduce__(self):
+        # Pickling these objects will drop the .serializer backlink,
+        # but preserve the raw data.
+        return (dict, (dict(self),))
+
 
 class ReturnList(list):
     """
@@ -25,6 +34,14 @@ class ReturnList(list):
     def __init__(self, *args, **kwargs):
         self.serializer = kwargs.pop('serializer')
         super(ReturnList, self).__init__(*args, **kwargs)
+
+    def __repr__(self):
+        return list.__repr__(self)
+
+    def __reduce__(self):
+        # Pickling these objects will drop the .serializer backlink,
+        # but preserve the raw data.
+        return (list, (list(self),))
 
 
 class BoundField(object):
@@ -47,9 +64,9 @@ class BoundField(object):
         return self._field.__class__
 
     def __repr__(self):
-        return '<%s value=%s errors=%s>' % (
+        return unicode_to_repr('<%s value=%s errors=%s>' % (
             self.__class__.__name__, self.value, self.errors
-        )
+        ))
 
 
 class NestedBoundField(BoundField):
@@ -98,3 +115,6 @@ class BindingDict(collections.MutableMapping):
 
     def __len__(self):
         return len(self.fields)
+
+    def __repr__(self):
+        return dict.__repr__(self.fields)

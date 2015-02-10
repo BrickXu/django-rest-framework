@@ -97,7 +97,7 @@ The first thing we need to get started on our Web API is to provide a way of ser
     class SnippetSerializer(serializers.Serializer):
         pk = serializers.IntegerField(read_only=True)
         title = serializers.CharField(required=False, allow_blank=True, max_length=100)
-        code = serializers.CharField(style={'type': 'textarea'})
+        code = serializers.CharField(style={'base_template': 'textarea.html'})
         linenos = serializers.BooleanField(required=False)
         language = serializers.ChoiceField(choices=LANGUAGE_CHOICES, default='python')
         style = serializers.ChoiceField(choices=STYLE_CHOICES, default='friendly')
@@ -124,7 +124,7 @@ The first part of the serializer class defines the fields that get serialized/de
 
 A serializer class is very similar to a Django `Form` class, and includes similar validation flags on the various fields, such as `required`, `max_length` and `default`.
 
-The field flags can also control how the serializer should be displayed in certain circumstances, such as when rendering to HTML. The `style={'type': 'textarea'}` flag above is equivelent to using `widget=widgets.Textarea` on a Django `Form` class. This is particularly useful for controlling how the browsable API should be displayed, as we'll see later in the tutorial.
+The field flags can also control how the serializer should be displayed in certain circumstances, such as when rendering to HTML. The `{'base_template': 'textarea.html'}` flag above is equivelent to using `widget=widgets.Textarea` on a Django `Form` class. This is particularly useful for controlling how the browsable API should be displayed, as we'll see later in the tutorial.
 
 We can actually also save ourselves some time by using the `ModelSerializer` class, as we'll see later, but for now we'll keep our serializer definition explicit.
 
@@ -161,9 +161,7 @@ At this point we've translated the model instance into Python native datatypes. 
 
 Deserialization is similar.  First we parse a stream into Python native datatypes...
 
-    # This import will use either `StringIO.StringIO` or `io.BytesIO`
-    # as appropriate, depending on if we're running Python 2 or Python 3.
-    from rest_framework.compat import BytesIO
+    from django.utils.six import BytesIO
 
     stream = BytesIO(content)
     data = JSONParser().parse(stream)
@@ -193,14 +191,14 @@ Our `SnippetSerializer` class is replicating a lot of information that's also co
 In the same way that Django provides both `Form` classes and `ModelForm` classes, REST framework includes both `Serializer` classes, and `ModelSerializer` classes.
 
 Let's look at refactoring our serializer using the `ModelSerializer` class.
-Open the file `snippets/serializers.py` again, and edit the `SnippetSerializer` class.
+Open the file `snippets/serializers.py` again, and replace the `SnippetSerializer` class with the following.
 
     class SnippetSerializer(serializers.ModelSerializer):
         class Meta:
             model = Snippet
             fields = ('id', 'title', 'code', 'linenos', 'language', 'style')
 
-One nice property that serializers have is that you can inspect all the fields in a serializer instance, by printing it's representation. Open the Django shell with `python manange.py shell`, then try the following:
+One nice property that serializers have is that you can inspect all the fields in a serializer instance, by printing its representation. Open the Django shell with `python manage.py shell`, then try the following:
 
     >>> from snippets.serializers import SnippetSerializer
     >>> serializer = SnippetSerializer()
@@ -208,7 +206,7 @@ One nice property that serializers have is that you can inspect all the fields i
     SnippetSerializer():
         id = IntegerField(label='ID', read_only=True)
         title = CharField(allow_blank=True, max_length=100, required=False)
-        code = CharField(style={'type': 'textarea'})
+        code = CharField(style={'base_template': 'textarea.html'})
         linenos = BooleanField(required=False)
         language = ChoiceField(choices=[('Clipper', 'FoxPro'), ('Cucumber', 'Gherkin'), ('RobotFramework', 'RobotFramework'), ('abap', 'ABAP'), ('ada', 'Ada')...
         style = ChoiceField(choices=[('autumn', 'autumn'), ('borland', 'borland'), ('bw', 'bw'), ('colorful', 'colorful')...
@@ -326,17 +324,51 @@ Quit out of the shell...
 
 In another terminal window, we can test the server.
 
-We can get a list of all of the snippets.
+We can test our API using using [curl][curl] or [httpie][httpie]. Httpie is a user friendly http client that's written in Python. Let's install that.
 
-	curl http://127.0.0.1:8000/snippets/
+You can install httpie using pip:
 
-	[{"id": 1, "title": "", "code": "foo = \"bar\"\n", "linenos": false, "language": "python", "style": "friendly"}, {"id": 2, "title": "", "code": "print \"hello, world\"\n", "linenos": false, "language": "python", "style": "friendly"}]
+    pip install httpie
 
-Or we can get a particular snippet by referencing its id.
+Finally, we can get a list of all of the snippets:
 
-	curl http://127.0.0.1:8000/snippets/2/
+    http http://127.0.0.1:8000/snippets/
 
-	{"id": 2, "title": "", "code": "print \"hello, world\"\n", "linenos": false, "language": "python", "style": "friendly"}
+    HTTP/1.1 200 OK
+    ...
+    [
+      {
+        "id": 1,
+        "title": "",
+        "code": "foo = \"bar\"\n",
+        "linenos": false,
+        "language": "python",
+        "style": "friendly"
+      },
+      {
+        "id": 2,
+        "title": "",
+        "code": "print \"hello, world\"\n",
+        "linenos": false,
+        "language": "python",
+        "style": "friendly"
+      }
+    ]
+
+Or we can get a particular snippet by referencing its id:
+
+    http http://127.0.0.1:8000/snippets/2/
+
+    HTTP/1.1 200 OK
+    ...
+    {
+      "id": 2,
+      "title": "",
+      "code": "print \"hello, world\"\n",
+      "linenos": false,
+      "language": "python",
+      "style": "friendly"
+    }
 
 Similarly, you can have the same json displayed by visiting these URLs in a web browser.
 
@@ -353,3 +385,5 @@ We'll see how we can start to improve things in [part 2 of the tutorial][tut-2].
 [sandbox]: http://restframework.herokuapp.com/
 [virtualenv]: http://www.virtualenv.org/en/latest/index.html
 [tut-2]: 2-requests-and-responses.md
+[httpie]: https://github.com/jakubroztocil/httpie#installation
+[curl]: http://curl.haxx.se

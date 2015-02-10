@@ -41,6 +41,8 @@ Defaults to `False`
 Normally an error will be raised if a field is not supplied during deserialization.
 Set to false if this field is not required to be present during deserialization.
 
+Setting this to `False` also allows the object attribute or dictionary key to be omitted from output when serializing the instance. If the key is not present it will simply not be included in the output representation.
+
 Defaults to `True`.
 
 ### `allow_null`
@@ -112,6 +114,8 @@ Two options are currently used in HTML form generation, `'input_type'` and `'bas
 
 A boolean representation.
 
+When using HTML encoded form input be aware that omitting a value will always be treated as setting a field to `False`, even if it has a `default=True` option specified. This is because HTML checkbox inputs represent the unchecked state by omitting the value, so REST framework treats omission as if it is an empty checkbox input.
+
 Corresponds to `django.db.models.fields.BooleanField`.
 
 **Signature:** `BooleanField()`
@@ -177,6 +181,12 @@ A `RegexField` that validates the input against a URL matching pattern. Expects 
 Corresponds to `django.db.models.fields.URLField`.  Uses Django's `django.core.validators.URLValidator` for validation.
 
 **Signature:** `URLField(max_length=200, min_length=None, allow_blank=False)`
+
+## UUIDField
+
+A field that ensures the input is a valid UUID string. The `to_internal_value` method will return a `uuid.UUID` instance. On output the field will return a string in the canonical hyphenated format, for example:
+
+    "de305d54-75b4-431b-adb2-eb6b9e546013"
 
 ---
 
@@ -310,14 +320,20 @@ Used by `ModelSerializer` to automatically generate fields if the corresponding 
 **Signature:** `ChoiceField(choices)`
 
 - `choices` - A list of valid values, or a list of `(key, display_name)` tuples.
+- `allow_blank` - If set to `True` then the empty string should be considered a valid value. If set to `False` then the empty string is considered invalid and will raise a validation error. Defaults to `False`.
+
+Both the `allow_blank` and `allow_null` are valid options on `ChoiceField`, although it is highly recommended that you only use one and not both. `allow_blank` should be preferred for textual choices, and `allow_null` should be preferred for numeric or other non-textual choices.
 
 ## MultipleChoiceField
 
-A field that can accept a set of zero, one or many values, chosen from a limited set of choices. Takes a single mandatory argument. `to_internal_representation` returns a `set` containing the selected values.
+A field that can accept a set of zero, one or many values, chosen from a limited set of choices. Takes a single mandatory argument. `to_internal_value` returns a `set` containing the selected values.
 
 **Signature:** `MultipleChoiceField(choices)`
 
 - `choices` - A list of valid values, or a list of `(key, display_name)` tuples.
+- `allow_blank` - If set to `True` then the empty string should be considered a valid value. If set to `False` then the empty string is considered invalid and will raise a validation error. Defaults to `False`.
+
+As with `ChoiceField`, both the `allow_blank` and `allow_null` options are valid, although it is highly recommended that you only use one and not both. `allow_blank` should be preferred for textual choices, and `allow_null` should be preferred for numeric or other non-textual choices.
 
 ---
 
@@ -364,7 +380,7 @@ A field class that validates a list of objects.
 
 **Signature**: `ListField(child)`
 
-- `child` - A field instance that should be used for validating the objects in the list.
+- `child` - A field instance that should be used for validating the objects in the list. If this argument is not provided then objects in the list will not be validated.
 
 For example, to validate a list of integers you might use something like the following:
 
@@ -378,6 +394,23 @@ The `ListField` class also supports a declarative style that allows you to write
         child = serializers.CharField()
 
 We can now reuse our custom `StringListField` class throughout our application, without having to provide a `child` argument to it.
+
+## DictField
+
+A field class that validates a dictionary of objects. The keys in `DictField` are always assumed to be string values.
+
+**Signature**: `DictField(child)`
+
+- `child` - A field instance that should be used for validating the values in the dictionary. If this argument is not provided then values in the mapping will not be validated.
+
+For example, to create a field that validates a mapping of strings to strings, you would write something like this:
+
+    document = DictField(child=CharField())
+
+You can also use the declarative style, as with `ListField`. For example:
+
+    class DocumentField(DictField):
+        child = CharField()
 
 ---
 
@@ -428,7 +461,7 @@ This is a read-only field. It gets its value by calling a method on the serializ
 
 **Signature**: `SerializerMethodField(method_name=None)`
 
-- `method-name` - The name of the method on the serializer to be called. If not included this defaults to `get_<field_name>`.
+- `method_name` - The name of the method on the serializer to be called. If not included this defaults to `get_<field_name>`.
 
 The serializer method referred to by the `method_name` argument should accept a single argument (in addition to `self`), which is the object being serialized. It should return whatever you want to be included in the serialized representation of the object. For example:
 
@@ -472,7 +505,7 @@ Let's look at an example of serializing a class that represents an RGB color val
 
     class ColorField(serializers.Field):
         """
-        Color objects are serialized into "rgb(#, #, #)" notation.
+        Color objects are serialized into 'rgb(#, #, #)' notation.
         """
         def to_representation(self, obj):
             return "rgb(%d, %d, %d)" % (obj.red, obj.green, obj.blue)
@@ -557,6 +590,10 @@ The [drf-compound-fields][drf-compound-fields] package provides "compound" seria
 
 The [drf-extra-fields][drf-extra-fields] package provides extra serializer fields for REST framework, including `Base64ImageField` and `PointField` classes.
 
+## djangrestframework-recursive
+
+the [djangorestframework-recursive][djangorestframework-recursive] package provides a `RecursiveField` for serializing and deserializing recursive structures
+
 ## django-rest-framework-gis
 
 The [django-rest-framework-gis][django-rest-framework-gis] package provides geographic addons for django rest framework like a  `GeometryField` field and a GeoJSON serializer.
@@ -573,6 +610,7 @@ The [django-rest-framework-hstore][django-rest-framework-hstore] package provide
 [iso8601]: http://www.w3.org/TR/NOTE-datetime
 [drf-compound-fields]: http://drf-compound-fields.readthedocs.org
 [drf-extra-fields]: https://github.com/Hipo/drf-extra-fields
+[djangorestframework-recursive]: https://github.com/heywbj/django-rest-framework-recursive
 [django-rest-framework-gis]: https://github.com/djangonauts/django-rest-framework-gis
 [django-rest-framework-hstore]: https://github.com/djangonauts/django-rest-framework-hstore
 [django-hstore]: https://github.com/djangonauts/django-hstore

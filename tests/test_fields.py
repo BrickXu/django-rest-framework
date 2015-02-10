@@ -4,6 +4,7 @@ from rest_framework import serializers
 import datetime
 import django
 import pytest
+import uuid
 
 
 # Tests for field keyword arguments and core functionality.
@@ -62,7 +63,7 @@ class TestEmpty:
         """
         field = serializers.CharField(allow_blank=True)
         output = field.run_validation('')
-        assert output is ''
+        assert output == ''
 
     def test_default(self):
         """
@@ -213,6 +214,56 @@ class TestBooleanHTMLInput:
         serializer = self.Serializer(data=MockHTMLDict())
         assert serializer.is_valid()
         assert serializer.validated_data == {'archived': False}
+
+
+class MockHTMLDict(dict):
+    """
+    This class mocks up a dictionary like object, that behaves
+    as if it was returned for multipart or urlencoded data.
+    """
+    getlist = None
+
+
+class TestHTMLInput:
+    def test_empty_html_charfield(self):
+        class TestSerializer(serializers.Serializer):
+            message = serializers.CharField(default='happy')
+
+        serializer = TestSerializer(data=MockHTMLDict())
+        assert serializer.is_valid()
+        assert serializer.validated_data == {'message': 'happy'}
+
+    def test_empty_html_charfield_allow_null(self):
+        class TestSerializer(serializers.Serializer):
+            message = serializers.CharField(allow_null=True)
+
+        serializer = TestSerializer(data=MockHTMLDict({'message': ''}))
+        assert serializer.is_valid()
+        assert serializer.validated_data == {'message': None}
+
+    def test_empty_html_datefield_allow_null(self):
+        class TestSerializer(serializers.Serializer):
+            expiry = serializers.DateField(allow_null=True)
+
+        serializer = TestSerializer(data=MockHTMLDict({'expiry': ''}))
+        assert serializer.is_valid()
+        assert serializer.validated_data == {'expiry': None}
+
+    def test_empty_html_charfield_allow_null_allow_blank(self):
+        class TestSerializer(serializers.Serializer):
+            message = serializers.CharField(allow_null=True, allow_blank=True)
+
+        serializer = TestSerializer(data=MockHTMLDict({'message': ''}))
+        assert serializer.is_valid()
+        assert serializer.validated_data == {'message': ''}
+
+    def test_empty_html_charfield_required_false(self):
+        class TestSerializer(serializers.Serializer):
+            message = serializers.CharField(required=False)
+
+        serializer = TestSerializer(data=MockHTMLDict())
+        assert serializer.is_valid()
+        assert serializer.validated_data == {}
 
 
 class TestCreateOnlyDefault:
@@ -415,6 +466,23 @@ class TestURLField(FieldValues):
     }
     outputs = {}
     field = serializers.URLField()
+
+
+class TestUUIDField(FieldValues):
+    """
+    Valid and invalid values for `UUIDField`.
+    """
+    valid_inputs = {
+        '825d7aeb-05a9-45b5-a5b7-05df87923cda': uuid.UUID('825d7aeb-05a9-45b5-a5b7-05df87923cda'),
+        '825d7aeb05a945b5a5b705df87923cda': uuid.UUID('825d7aeb-05a9-45b5-a5b7-05df87923cda')
+    }
+    invalid_inputs = {
+        '825d7aeb-05a9-45b5-a5b7': ['"825d7aeb-05a9-45b5-a5b7" is not a valid UUID.']
+    }
+    outputs = {
+        uuid.UUID('825d7aeb-05a9-45b5-a5b7-05df87923cda'): '825d7aeb-05a9-45b5-a5b7-05df87923cda'
+    }
+    field = serializers.UUIDField()
 
 
 # Number types...
@@ -804,6 +872,21 @@ class TestChoiceField(FieldValues):
         ]
     )
 
+    def test_allow_blank(self):
+        """
+        If `allow_blank=True` then '' is a valid input.
+        """
+        field = serializers.ChoiceField(
+            allow_blank=True,
+            choices=[
+                ('poor', 'Poor quality'),
+                ('medium', 'Medium quality'),
+                ('good', 'Good quality'),
+            ]
+        )
+        output = field.run_validation('')
+        assert output == ''
+
 
 class TestChoiceFieldWithType(FieldValues):
     """
@@ -964,7 +1047,7 @@ class TestValidImageField(FieldValues):
 
 class TestListField(FieldValues):
     """
-    Values for `ListField`.
+    Values for `ListField` with IntegerField as child.
     """
     valid_inputs = [
         ([1, 2, 3], [1, 2, 3]),
@@ -979,6 +1062,55 @@ class TestListField(FieldValues):
         (['1', '2', '3'], [1, 2, 3])
     ]
     field = serializers.ListField(child=serializers.IntegerField())
+
+
+class TestUnvalidatedListField(FieldValues):
+    """
+    Values for `ListField` with no `child` argument.
+    """
+    valid_inputs = [
+        ([1, '2', True, [4, 5, 6]], [1, '2', True, [4, 5, 6]]),
+    ]
+    invalid_inputs = [
+        ('not a list', ['Expected a list of items but got type `str`']),
+    ]
+    outputs = [
+        ([1, '2', True, [4, 5, 6]], [1, '2', True, [4, 5, 6]]),
+    ]
+    field = serializers.ListField()
+
+
+class TestDictField(FieldValues):
+    """
+    Values for `ListField` with CharField as child.
+    """
+    valid_inputs = [
+        ({'a': 1, 'b': '2', 3: 3}, {'a': '1', 'b': '2', '3': '3'}),
+    ]
+    invalid_inputs = [
+        ({'a': 1, 'b': None}, ['This field may not be null.']),
+        ('not a dict', ['Expected a dictionary of items but got type `str`']),
+    ]
+    outputs = [
+        ({'a': 1, 'b': '2', 3: 3}, {'a': '1', 'b': '2', '3': '3'}),
+    ]
+    field = serializers.DictField(child=serializers.CharField())
+
+
+class TestUnvalidatedDictField(FieldValues):
+    """
+    Values for `ListField` with no `child` argument.
+    """
+    valid_inputs = [
+        ({'a': 1, 'b': [4, 5, 6], 1: 123}, {'a': 1, 'b': [4, 5, 6], '1': 123}),
+    ]
+    invalid_inputs = [
+        ('not a dict', ['Expected a dictionary of items but got type `str`']),
+    ]
+    outputs = [
+        ({'a': 1, 'b': [4, 5, 6]}, {'a': 1, 'b': [4, 5, 6]}),
+    ]
+    field = serializers.DictField()
 
 
 # Tests for FieldField.

@@ -10,12 +10,11 @@ python primitives.
 2. The process of marshalling between python primitives and request and
 response content is handled by parsers and renderers.
 """
-import warnings
-
+from __future__ import unicode_literals
 from django.db import models
-from django.db.models.fields import FieldDoesNotExist
+from django.db.models.fields import FieldDoesNotExist, Field as DjangoField
 from django.utils.translation import ugettext_lazy as _
-
+from rest_framework.compat import postgres_fields, unicode_to_repr
 from rest_framework.utils import model_meta
 from rest_framework.utils.field_mapping import (
     get_url_kwargs, get_field_kwargs,
@@ -29,6 +28,7 @@ from rest_framework.validators import (
     UniqueForDateValidator, UniqueForMonthValidator, UniqueForYearValidator,
     UniqueTogetherValidator
 )
+import warnings
 
 
 # Note: We do the following so that users of the framework can use this style:
@@ -58,11 +58,31 @@ class BaseSerializer(Field):
     """
     The BaseSerializer class provides a minimal class which may be used
     for writing custom serializer implementations.
+
+    Note that we strongly restrict the ordering of operations/properties
+    that may be used on the serializer in order to enforce correct usage.
+
+    In particular, if a `data=` argument is passed then:
+
+    .is_valid() - Available.
+    .initial_data - Available.
+    .validated_data - Only available after calling `is_valid()`
+    .errors - Only available after calling `is_valid()`
+    .data - Only available after calling `is_valid()`
+
+    If a `data=` argument is not passed then:
+
+    .is_valid() - Not available.
+    .initial_data - Not available.
+    .validated_data - Not available.
+    .errors - Not available.
+    .data - Available.
     """
 
-    def __init__(self, instance=None, data=None, **kwargs):
+    def __init__(self, instance=None, data=empty, **kwargs):
         self.instance = instance
-        self._initial_data = data
+        if data is not empty:
+            self.initial_data = data
         self.partial = kwargs.pop('partial', False)
         self._context = kwargs.pop('context', {})
         kwargs.pop('many', None)
@@ -156,9 +176,14 @@ class BaseSerializer(Field):
             (self.__class__.__module__, self.__class__.__name__)
         )
 
+        assert hasattr(self, 'initial_data'), (
+            'Cannot call `.is_valid()` as no `data=` keyword argument was '
+            'passed when instantiating the serializer instance.'
+        )
+
         if not hasattr(self, '_validated_data'):
             try:
-                self._validated_data = self.run_validation(self._initial_data)
+                self._validated_data = self.run_validation(self.initial_data)
             except ValidationError as exc:
                 self._validated_data = {}
                 self._errors = exc.detail
@@ -172,6 +197,16 @@ class BaseSerializer(Field):
 
     @property
     def data(self):
+        if hasattr(self, 'initial_data') and not hasattr(self, '_validated_data'):
+            msg = (
+                'When a serializer is passed a `data` keyword argument you '
+                'must call `.is_valid()` before attempting to access the '
+                'serialized `.data` representation.\n'
+                'You should either call `.is_valid()` first, '
+                'or access `.initial_data` instead.'
+            )
+            raise AssertionError(msg)
+
         if not hasattr(self, '_data'):
             if self.instance is not None and not getattr(self, '_errors', None):
                 self._data = self.to_representation(self.instance)
@@ -201,11 +236,11 @@ class BaseSerializer(Field):
 
 class SerializerMetaclass(type):
     """
-    This metaclass sets a dictionary named `base_fields` on the class.
+    This metaclass sets a dictionary named `_declared_fields` on the class.
 
     Any instances of `Field` included as attributes on either the class
     or on any of its superclasses will be include in the
-    `base_fields` dictionary.
+    `_declared_fields` dictionary.
     """
 
     @classmethod
@@ -218,7 +253,7 @@ class SerializerMetaclass(type):
         # If this class is subclassing another Serializer, add that Serializer's
         # fields.  Note that we loop over the bases in *reverse*. This is necessary
         # in order to maintain the correct order of fields.
-        for base in bases[::-1]:
+        for base in reversed(bases):
             if hasattr(base, '_declared_fields'):
                 fields = list(base._declared_fields.items()) + fields
 
@@ -227,6 +262,35 @@ class SerializerMetaclass(type):
     def __new__(cls, name, bases, attrs):
         attrs['_declared_fields'] = cls._get_declared_fields(bases, attrs)
         return super(SerializerMetaclass, cls).__new__(cls, name, bases, attrs)
+
+
+def get_validation_error_detail(exc):
+    assert isinstance(exc, (ValidationError, DjangoValidationError))
+
+    if isinstance(exc, DjangoValidationError):
+        # Normally you should raise `serializers.ValidationError`
+        # inside your codebase, but we handle Django's validation
+        # exception class as well for simpler compat.
+        # Eg. Calling Model.clean() explicitly inside Serializer.validate()
+        return {
+            api_settings.NON_FIELD_ERRORS_KEY: list(exc.messages)
+        }
+    elif isinstance(exc.detail, dict):
+        # If errors may be a dict we use the standard {key: list of values}.
+        # Here we ensure that all the values are *lists* of errors.
+        return dict([
+            (key, value if isinstance(value, list) else [value])
+            for key, value in exc.detail.items()
+        ])
+    elif isinstance(exc.detail, list):
+        # Errors raised as a list are non-field errors.
+        return {
+            api_settings.NON_FIELD_ERRORS_KEY: exc.detail
+        }
+    # Errors raised as a string are non-field errors.
+    return {
+        api_settings.NON_FIELD_ERRORS_KEY: [exc.detail]
+    }
 
 
 @six.add_metaclass(SerializerMetaclass)
@@ -266,11 +330,11 @@ class Serializer(BaseSerializer):
         return getattr(getattr(self, 'Meta', None), 'validators', [])
 
     def get_initial(self):
-        if self._initial_data is not None:
+        if hasattr(self, 'initial_data'):
             return OrderedDict([
-                (field_name, field.get_value(self._initial_data))
+                (field_name, field.get_value(self.initial_data))
                 for field_name, field in self.fields.items()
-                if field.get_value(self._initial_data) is not empty
+                if field.get_value(self.initial_data) is not empty
                 and not field.read_only
             ])
 
@@ -293,18 +357,24 @@ class Serializer(BaseSerializer):
         performed by validators and the `.validate()` method should
         be coerced into an error dictionary with a 'non_fields_error' key.
         """
-        if data is empty:
-            if getattr(self.root, 'partial', False):
-                raise SkipField()
-            if self.required:
-                self.fail('required')
-            return self.get_default()
+        (is_empty_value, data) = self.validate_empty_values(data)
+        if is_empty_value:
+            return data
 
-        if data is None:
-            if not self.allow_null:
-                self.fail('null')
-            return None
+        value = self.to_internal_value(data)
+        try:
+            self.run_validators(value)
+            value = self.validate(value)
+            assert value is not None, '.validate() should return the validated data'
+        except (ValidationError, DjangoValidationError) as exc:
+            raise ValidationError(detail=get_validation_error_detail(exc))
 
+        return value
+
+    def to_internal_value(self, data):
+        """
+        Dict of native values <- Dict of primitive datatypes.
+        """
         if not isinstance(data, dict):
             message = self.error_messages['invalid'].format(
                 datatype=type(data).__name__
@@ -313,42 +383,6 @@ class Serializer(BaseSerializer):
                 api_settings.NON_FIELD_ERRORS_KEY: [message]
             })
 
-        value = self.to_internal_value(data)
-        try:
-            self.run_validators(value)
-            value = self.validate(value)
-            assert value is not None, '.validate() should return the validated data'
-        except ValidationError as exc:
-            if isinstance(exc.detail, dict):
-                # .validate() errors may be a dict, in which case, use
-                # standard {key: list of values} style.
-                raise ValidationError(dict([
-                    (key, value if isinstance(value, list) else [value])
-                    for key, value in exc.detail.items()
-                ]))
-            elif isinstance(exc.detail, list):
-                raise ValidationError({
-                    api_settings.NON_FIELD_ERRORS_KEY: exc.detail
-                })
-            else:
-                raise ValidationError({
-                    api_settings.NON_FIELD_ERRORS_KEY: [exc.detail]
-                })
-        except DjangoValidationError as exc:
-            # Normally you should raise `serializers.ValidationError`
-            # inside your codebase, but we handle Django's validation
-            # exception class as well for simpler compat.
-            # Eg. Calling Model.clean() explicitly inside Serializer.validate()
-            raise ValidationError({
-                api_settings.NON_FIELD_ERRORS_KEY: list(exc.messages)
-            })
-
-        return value
-
-    def to_internal_value(self, data):
-        """
-        Dict of native values <- Dict of primitive datatypes.
-        """
         ret = OrderedDict()
         errors = OrderedDict()
         fields = [
@@ -385,8 +419,14 @@ class Serializer(BaseSerializer):
         fields = [field for field in self.fields.values() if not field.write_only]
 
         for field in fields:
-            attribute = field.get_attribute(instance)
+            try:
+                attribute = field.get_attribute(instance)
+            except SkipField:
+                continue
+
             if attribute is None:
+                # We skip `to_representation` for `None` values so that
+                # fields do not have to explicitly deal with that case.
                 ret[field.field_name] = None
             else:
                 ret[field.field_name] = field.to_representation(attribute)
@@ -397,7 +437,7 @@ class Serializer(BaseSerializer):
         return attrs
 
     def __repr__(self):
-        return representation.serializer_repr(self, indent=1)
+        return unicode_to_repr(representation.serializer_repr(self, indent=1))
 
     # The following are used for accessing `BoundField` instances on the
     # serializer, for the purposes of presenting a form-like API onto the
@@ -448,8 +488,8 @@ class ListSerializer(BaseSerializer):
         self.child.bind(field_name='', parent=self)
 
     def get_initial(self):
-        if self._initial_data is not None:
-            return self.to_representation(self._initial_data)
+        if hasattr(self, 'initial_data'):
+            return self.to_representation(self.initial_data)
         return []
 
     def get_value(self, dictionary):
@@ -461,6 +501,26 @@ class ListSerializer(BaseSerializer):
         if html.is_html_input(dictionary):
             return html.parse_html_list(dictionary, prefix=self.field_name)
         return dictionary.get(self.field_name, empty)
+
+    def run_validation(self, data=empty):
+        """
+        We override the default `run_validation`, because the validation
+        performed by validators and the `.validate()` method should
+        be coerced into an error dictionary with a 'non_fields_error' key.
+        """
+        (is_empty_value, data) = self.validate_empty_values(data)
+        if is_empty_value:
+            return data
+
+        value = self.to_internal_value(data)
+        try:
+            self.run_validators(value)
+            value = self.validate(value)
+            assert value is not None, '.validate() should return the validated data'
+        except (ValidationError, DjangoValidationError) as exc:
+            raise ValidationError(detail=get_validation_error_detail(exc))
+
+        return value
 
     def to_internal_value(self, data):
         """
@@ -498,10 +558,15 @@ class ListSerializer(BaseSerializer):
         """
         List of object instances -> List of dicts of primitive datatypes.
         """
-        iterable = data.all() if (hasattr(data, 'all')) else data
+        # Dealing with nested relationships, data can be a Manager,
+        # so, first get a queryset from the Manager if needed
+        iterable = data.all() if isinstance(data, models.Manager) else data
         return [
             self.child.to_representation(item) for item in iterable
         ]
+
+    def validate(self, attrs):
+        return attrs
 
     def update(self, instance, validated_data):
         raise NotImplementedError(
@@ -540,7 +605,7 @@ class ListSerializer(BaseSerializer):
         return self.instance
 
     def __repr__(self):
-        return representation.list_repr(self, indent=1)
+        return unicode_to_repr(representation.list_repr(self, indent=1))
 
     # Include a backlink to the serializer class on return objects.
     # Allows renderers such as HTMLFormRenderer to get the full field info.
@@ -568,11 +633,11 @@ def raise_errors_on_nested_writes(method_name, serializer, validated_data):
     If we don't do this explicitly they'd get a less helpful error when
     calling `.save()` on the serializer.
 
-    We don't *automatically* support these sorts of nested writes brecause
+    We don't *automatically* support these sorts of nested writes because
     there are too many ambiguities to define a default behavior.
 
     Eg. Suppose we have a `UserSerializer` with a nested profile. How should
-    we handle the case of an update, where the `profile` realtionship does
+    we handle the case of an update, where the `profile` relationship does
     not exist? Any of the following might be valid:
 
     * Raise an application error.
@@ -587,6 +652,7 @@ def raise_errors_on_nested_writes(method_name, serializer, validated_data):
     #     profile = ProfileSerializer()
     assert not any(
         isinstance(field, BaseSerializer) and (key in validated_data)
+        and isinstance(validated_data[key], (list, dict))
         for key, field in serializer.fields.items()
     ), (
         'The `.{method_name}()` method does not support writable nested'
@@ -606,6 +672,7 @@ def raise_errors_on_nested_writes(method_name, serializer, validated_data):
     #     address = serializer.CharField('profile.address')
     assert not any(
         '.' in field.source and (key in validated_data)
+        and isinstance(validated_data[key], (list, dict))
         for key, field in serializer.fields.items()
     ), (
         'The `.{method_name}()` method does not support writable dotted-source '
@@ -635,6 +702,7 @@ class ModelSerializer(Serializer):
     you need you should either declare the extra/differing fields explicitly on
     the serializer class, or simply use a `Serializer` class.
     """
+
     _field_mapping = ClassLookupDict({
         models.AutoField: IntegerField,
         models.BigIntegerField: IntegerField,
@@ -657,7 +725,8 @@ class ModelSerializer(Serializer):
         models.SmallIntegerField: IntegerField,
         models.TextField: CharField,
         models.TimeField: TimeField,
-        models.URLField: URLField,
+        models.URLField: URLField
+        # Note: Some version-specific mappings also defined below.
     })
     _related_class = PrimaryKeyRelatedField
 
@@ -813,13 +882,34 @@ class ModelSerializer(Serializer):
         # Retrieve metadata about fields & relationships on the model class.
         info = model_meta.get_field_info(model)
 
-        # Use the default set of field names if none is supplied explicitly.
         if fields is None:
+            # Use the default set of field names if none is supplied explicitly.
             fields = self._get_default_field_names(declared_fields, info)
             exclude = getattr(self.Meta, 'exclude', None)
             if exclude is not None:
                 for field_name in exclude:
+                    assert field_name in fields, (
+                        'The field in the `exclude` option must be a model field. Got %s.' %
+                        field_name
+                    )
                     fields.remove(field_name)
+        else:
+            # Check that any fields declared on the class are
+            # also explicitly included in `Meta.fields`.
+
+            # Note that we ignore any fields that were declared on a parent
+            # class, in order to support only including a subset of fields
+            # when subclassing serializers.
+            declared_field_names = set(declared_fields.keys())
+            for cls in self.__class__.__bases__:
+                declared_field_names -= set(getattr(cls, '_declared_fields', []))
+
+            missing_fields = declared_field_names - set(fields)
+            assert not missing_fields, (
+                'Field `%s` has been declared on serializer `%s`, but '
+                'is missing from `Meta.fields`.' %
+                (list(missing_fields)[0], self.__class__.__name__)
+            )
 
         # Determine the set of model fields, and the fields that they map to.
         # We actually only need this to deal with the slightly awkward case
@@ -849,6 +939,9 @@ class ModelSerializer(Serializer):
             try:
                 model_field = model._meta.get_field(model_field_name)
             except FieldDoesNotExist:
+                continue
+
+            if not isinstance(model_field, DjangoField):
                 continue
 
             # Include each of the `unique_for_*` field names.
@@ -920,7 +1013,7 @@ class ModelSerializer(Serializer):
                     # `ModelField`, which is used when no other typed field
                     # matched to the model field.
                     kwargs.pop('model_field', None)
-                if not issubclass(field_cls, CharField):
+                if not issubclass(field_cls, CharField) and not issubclass(field_cls, ChoiceField):
                     # `allow_blank` is only valid for textual fields.
                     kwargs.pop('allow_blank', None)
 
@@ -951,17 +1044,6 @@ class ModelSerializer(Serializer):
                 raise ImproperlyConfigured(
                     'Field name `%s` is not valid for model `%s`.' %
                     (field_name, model.__class__.__name__)
-                )
-
-            # Check that any fields declared on the class are
-            # also explicitly included in `Meta.fields`.
-            missing_fields = set(declared_fields.keys()) - set(fields)
-            if missing_fields:
-                missing_field = list(missing_fields)[0]
-                raise ImproperlyConfigured(
-                    'Field `%s` has been declared on serializer `%s`, but '
-                    'is missing from `Meta.fields`.' %
-                    (missing_field, self.__class__.__name__)
                 )
 
             # Populate any kwargs defined in `Meta.extra_kwargs`
@@ -1047,9 +1129,19 @@ class ModelSerializer(Serializer):
         class NestedSerializer(ModelSerializer):
             class Meta:
                 model = relation_info.related
-                depth = nested_depth
+                depth = nested_depth - 1
 
         return NestedSerializer
+
+
+if hasattr(models, 'UUIDField'):
+    ModelSerializer._field_mapping[models.UUIDField] = UUIDField
+
+if postgres_fields:
+    class CharMappingField(DictField):
+        child = CharField()
+
+    ModelSerializer._field_mapping[postgres_fields.HStoreField] = CharMappingField
 
 
 class HyperlinkedModelSerializer(ModelSerializer):
@@ -1074,6 +1166,6 @@ class HyperlinkedModelSerializer(ModelSerializer):
         class NestedSerializer(HyperlinkedModelSerializer):
             class Meta:
                 model = relation_info.related
-                depth = nested_depth
+                depth = nested_depth - 1
 
         return NestedSerializer

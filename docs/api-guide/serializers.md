@@ -22,11 +22,13 @@ The serializers in REST framework work very similarly to Django's `Form` and `Mo
 
 Let's start by creating a simple object we can use for example purposes:
 
+    from datetime import datetime
+    
     class Comment(object):
         def __init__(self, email, content, created=None):
             self.email = email
             self.content = content
-            self.created = created or datetime.datetime.now()
+            self.created = created or datetime.now()
 
     comment = Comment(email='leila@example.com', content='foo bar')
 
@@ -61,10 +63,10 @@ At this point we've translated the model instance into Python native datatypes. 
 
 Deserialization is similar. First we parse a stream into Python native datatypes...
 
-    from StringIO import StringIO
+    from django.utils.six import BytesIO
     from rest_framework.parsers import JSONParser
 
-    stream = StringIO(json)
+    stream = BytesIO(json)
     data = JSONParser().parse(stream)
 
 ...then we restore those native datatypes into a dictionary of validated data.
@@ -240,6 +242,12 @@ Serializer classes can also include reusable validators that are applied to the 
 
 For more information see the [validators documentation](validators.md).
 
+## Accessing the initial data and instance
+
+When passing an initial object or queryset to a serializer instance, the object will be made available as `.instance`. If no initial object is passed then the `.instance` attribute will be `None`.
+
+When passing data to a serializer instance, the unmodified data will be made available as `.initial_data`. If the data keyword argument is not passed then the `.initial_data` attribute will not exist.
+
 ## Partial updates
 
 By default, serializers must be passed values for all required fields or they will raise validation errors. You can use the `partial` argument in order to allow partial updates.
@@ -376,7 +384,7 @@ This manager class now more nicely encapsulates that user instances and profile 
             has_support_contract=validated_data['profile']['has_support_contract']
         )
 
-For more details on this approach see the Django documentation on [model managers](model-managers), and [this blogpost on using model and manger classes](encapsulation-blogpost).
+For more details on this approach see the Django documentation on [model managers](model-managers), and [this blogpost on using model and manager classes](encapsulation-blogpost).
 
 ## Dealing with multiple objects
 

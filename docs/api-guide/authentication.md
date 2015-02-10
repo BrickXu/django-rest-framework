@@ -34,7 +34,7 @@ The value of `request.user` and `request.auth` for unauthenticated requests can 
 
 ## Setting the authentication scheme
 
-The default authentication schemes may be set globally, using the `DEFAULT_AUTHENTICATION` setting.  For example.
+The default authentication schemes may be set globally, using the `DEFAULT_AUTHENTICATION_CLASSES` setting.  For example.
 
     REST_FRAMEWORK = {
         'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -282,7 +282,7 @@ This authentication class depends on the optional [django-oauth2-provider][djang
         'provider.oauth2',
     )
 
-Then add `OAuth2Authentication` to your global `DEFAULT_AUTHENTICATION` setting:
+Then add `OAuth2Authentication` to your global `DEFAULT_AUTHENTICATION_CLASSES` setting:
 
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework.authentication.OAuth2Authentication',
@@ -427,7 +427,7 @@ HTTP Signature (currently a [IETF draft][http-signature-ietf-draft]) provides a 
 [oauth]: http://oauth.net/2/
 [permission]: permissions.md
 [throttling]: throttling.md
-[csrf-ajax]: https://docs.djangoproject.com/en/dev/ref/contrib/csrf/#ajax
+[csrf-ajax]: https://docs.djangoproject.com/en/dev/ref/csrf/#ajax
 [mod_wsgi_official]: http://code.google.com/p/modwsgi/wiki/ConfigurationDirectives#WSGIPassAuthorization
 [custom-user-model]: https://docs.djangoproject.com/en/dev/topics/auth/customizing/#specifying-a-custom-user-model
 [south-dependencies]: http://south.readthedocs.org/en/latest/dependencies.html

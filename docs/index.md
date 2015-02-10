@@ -51,14 +51,14 @@ Some reasons you might want to use REST framework:
 REST framework requires the following:
 
 * Python (2.6.5+, 2.7, 3.2, 3.3, 3.4)
-* Django (1.4.11+, 1.5.5+, 1.6, 1.7)
+* Django (1.4.11+, 1.5.6+, 1.6.3+, 1.7)
 
 The following packages are optional:
 
 * [Markdown][markdown] (2.1.0+) - Markdown support for the browsable API.
 * [PyYAML][yaml] (3.10+) - YAML content-type support.
 * [defusedxml][defusedxml] (0.3+) - XML content-type support.
-* [django-filter][django-filter] (0.5.4+) - Filtering support.
+* [django-filter][django-filter] (0.9.2+) - Filtering support.
 * [django-oauth-plus][django-oauth-plus] (2.0+) and [oauth2][oauth2] (1.5.211+) - OAuth 1.0a support.
 * [django-oauth2-provider][django-oauth2-provider] (0.2.3+) - OAuth 2.0 support.
 * [django-guardian][django-guardian] (1.1.1+) - Object level permissions support.
@@ -181,6 +181,7 @@ The API guide is your complete reference manual to all the functionality provide
 * [Filtering][filtering]
 * [Pagination][pagination]
 * [Content negotiation][contentnegotiation]
+* [Metadata][metadata]
 * [Format suffixes][formatsuffixes]
 * [Returning URLs][reverse]
 * [Exceptions][exceptions]
@@ -199,6 +200,7 @@ General guides to using REST framework.
 * [REST, Hypermedia & HATEOAS][rest-hypermedia-hateoas]
 * [Third Party Resources][third-party-resources]
 * [Contributing to REST framework][contributing]
+* [Project management][project-management]
 * [2.0 Announcement][rest-framework-2-announcement]
 * [2.2 Announcement][2.2-announcement]
 * [2.3 Announcement][2.3-announcement]
@@ -233,7 +235,7 @@ Send a description of the issue via email to [rest-framework-security@googlegrou
 
 ## License
 
-Copyright (c) 2011-2014, Tom Christie
+Copyright (c) 2011-2015, Tom Christie
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -304,6 +306,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 [filtering]: api-guide/filtering.md
 [pagination]: api-guide/pagination.md
 [contentnegotiation]: api-guide/content-negotiation.md
+[metadata]: api-guide/metadata.md
 [formatsuffixes]: api-guide/format-suffixes.md
 [reverse]: api-guide/reverse.md
 [exceptions]: api-guide/exceptions.md
@@ -317,6 +320,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 [browsableapi]: topics/browsable-api.md
 [rest-hypermedia-hateoas]: topics/rest-hypermedia-hateoas.md
 [contributing]: topics/contributing.md
+[project-management]: topics/project-management.md
 [third-party-resources]: topics/third-party-resources.md
 [rest-framework-2-announcement]: topics/rest-framework-2-announcement.md
 [2.2-announcement]: topics/2.2-announcement.md

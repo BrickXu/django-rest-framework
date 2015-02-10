@@ -12,12 +12,13 @@ from __future__ import unicode_literals
 from django.conf import settings
 from django.http import QueryDict
 from django.http.multipartparser import parse_header
+from django.utils import six
 from django.utils.datastructures import MultiValueDict
 from django.utils.datastructures import MergeDict as DjangoMergeDict
-from django.utils.six import BytesIO
 from rest_framework import HTTP_HEADER_ENCODING
 from rest_framework import exceptions
 from rest_framework.settings import api_settings
+import sys
 import warnings
 
 
@@ -277,8 +278,12 @@ class Request(object):
         Sets the user on the current request. This is necessary to maintain
         compatibility with django.contrib.auth where the user property is
         set in the login and logout functions.
+
+        Note that we also set the user on Django's underlying `HttpRequest`
+        instance, ensuring that it is available to any middleware in the stack.
         """
         self._user = value
+        self._request.user = value
 
     @property
     def auth(self):
@@ -297,6 +302,7 @@ class Request(object):
         request, such as an authentication token.
         """
         self._auth = value
+        self._request.auth = value
 
     @property
     def successful_authenticator(self):
@@ -357,7 +363,7 @@ class Request(object):
         elif hasattr(self._request, 'read'):
             self._stream = self._request
         else:
-            self._stream = BytesIO(self.raw_post_data)
+            self._stream = six.BytesIO(self.raw_post_data)
 
     def _perform_form_overloading(self):
         """
@@ -399,7 +405,7 @@ class Request(object):
             self._CONTENTTYPE_PARAM in self._data
         ):
             self._content_type = self._data[self._CONTENTTYPE_PARAM]
-            self._stream = BytesIO(self._data[self._CONTENT_PARAM].encode(self.parser_context['encoding']))
+            self._stream = six.BytesIO(self._data[self._CONTENT_PARAM].encode(self.parser_context['encoding']))
             self._data, self._files, self._full_data = (Empty, Empty, Empty)
 
     def _parse(self):
@@ -456,7 +462,7 @@ class Request(object):
 
             if user_auth_tuple is not None:
                 self._authenticator = authenticator
-                self._user, self._auth = user_auth_tuple
+                self.user, self.auth = user_auth_tuple
                 return
 
         self._not_authenticated()
@@ -471,17 +477,25 @@ class Request(object):
         self._authenticator = None
 
         if api_settings.UNAUTHENTICATED_USER:
-            self._user = api_settings.UNAUTHENTICATED_USER()
+            self.user = api_settings.UNAUTHENTICATED_USER()
         else:
-            self._user = None
+            self.user = None
 
         if api_settings.UNAUTHENTICATED_TOKEN:
-            self._auth = api_settings.UNAUTHENTICATED_TOKEN()
+            self.auth = api_settings.UNAUTHENTICATED_TOKEN()
         else:
-            self._auth = None
+            self.auth = None
 
-    def __getattr__(self, attr):
+    def __getattribute__(self, attr):
         """
-        Proxy other attributes to the underlying HttpRequest object.
+        If an attribute does not exist on this instance, then we also attempt
+        to proxy it to the underlying HttpRequest object.
         """
-        return getattr(self._request, attr)
+        try:
+            return super(Request, self).__getattribute__(attr)
+        except AttributeError:
+            info = sys.exc_info()
+            try:
+                return getattr(self._request, attr)
+            except AttributeError:
+                six.reraise(info[0], info[1], info[2].tb_next)

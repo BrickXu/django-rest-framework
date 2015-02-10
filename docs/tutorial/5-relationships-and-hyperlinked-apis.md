@@ -75,7 +75,7 @@ The `HyperlinkedModelSerializer` has the following differences from `ModelSerial
 We can easily re-write our existing serializers to use hyperlinking. In your `snippets/serializers.py` add:
 
     class SnippetSerializer(serializers.HyperlinkedModelSerializer):
-        owner = serializers.Field(source='owner.username')
+        owner = serializers.ReadOnlyField(source='owner.username')
         highlight = serializers.HyperlinkedIdentityField(view_name='snippet-highlight', format='html')
 
         class Meta:
@@ -85,7 +85,7 @@ We can easily re-write our existing serializers to use hyperlinking. In your `sn
 
 
     class UserSerializer(serializers.HyperlinkedModelSerializer):
-        snippets = serializers.HyperlinkedRelatedField(many=True, view_name='snippet-detail')
+        snippets = serializers.HyperlinkedRelatedField(many=True, view_name='snippet-detail', read_only=True)
 
         class Meta:
             model = User
@@ -105,6 +105,8 @@ If we're going to have a hyperlinked API, we need to make sure we name our URL p
 * Our snippet and user serializers include `'url'` fields that by default will refer to `'{model_name}-detail'`, which in this case will be `'snippet-detail'` and `'user-detail'`.
 
 After adding all those names into our URLconf, our final `snippets/urls.py` file should look something like this:
+
+    from django.conf.urls import url, include
 
     # API endpoints
     urlpatterns = format_suffix_patterns([
@@ -136,7 +138,7 @@ After adding all those names into our URLconf, our final `snippets/urls.py` file
 
 The list views for users and code snippets could end up returning quite a lot of instances, so really we'd like to make sure we paginate the results, and allow the API client to step through each of the individual pages.
 
-We can change the default list style to use pagination, by modifying our `settings.py` file slightly.  Add the following setting:
+We can change the default list style to use pagination, by modifying our `tutorial/settings.py` file slightly.  Add the following setting:
 
     REST_FRAMEWORK = {
         'PAGINATE_BY': 10

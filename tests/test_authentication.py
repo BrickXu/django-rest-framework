@@ -142,7 +142,7 @@ class SessionAuthTests(TestCase):
         cf. [#1810](https://github.com/tomchristie/django-rest-framework/pull/1810)
         """
         response = self.csrf_client.get('/auth/login/')
-        self.assertContains(response, '<label class="span4">Username:</label>')
+        self.assertContains(response, '<label for="id_username">Username:</label>')
 
     def test_post_form_session_auth_failing_csrf(self):
         """
@@ -201,6 +201,15 @@ class TokenAuthTests(TestCase):
         auth = "Token " + self.key
         response = self.csrf_client.post('/token/', {'example': 'example'}, format='json', HTTP_AUTHORIZATION=auth)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_post_json_makes_one_db_query(self):
+        """Ensure that authenticating a user using a token performs only one DB query"""
+        auth = "Token " + self.key
+
+        def func_to_test():
+            return self.csrf_client.post('/token/', {'example': 'example'}, format='json', HTTP_AUTHORIZATION=auth)
+
+        self.assertNumQueries(1, func_to_test)
 
     def test_post_form_failing_token_auth(self):
         """Ensure POSTing form over token auth without correct credentials fails"""
